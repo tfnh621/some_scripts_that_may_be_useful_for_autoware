@@ -20,13 +20,10 @@ launch_rviz2() {
         -d $(find-pkg-share "$package_name")/rviz/autoware.rviz \
         -s /dev/null \
         --ros-args \
-            -r __node:=rviz_ava1 \
+            -r __node:=rviz2 \
             -p use_sim_time:=False \
-            -r /perception/traffic_light_recognition/traffic_signals:=/perception/traffic_light_recognition/traffic_signals_rviz \
     > /dev/null 2>&1 &
     echo $!
-
-    # FIXME: topic の rename パラメーターをどうにかする
 }
 
 find_rviz2_window() {
