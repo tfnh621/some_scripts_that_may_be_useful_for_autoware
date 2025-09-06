@@ -211,9 +211,10 @@ main() {
 
     # ループ
     while true; do
+        # 指定時間待機
         sleep $((60 * $SLEEP_MINUTES))
 
-        # 古い rviz2 がフォーカスを失わないようにする
+        # 新しい rviz2 が起動した際に古い rviz2 がフォーカスを失わないようにする
         keep_rviz2_window_focused &
 
         # 新しい rviz2 プロセスを起動する
