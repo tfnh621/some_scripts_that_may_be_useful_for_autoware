@@ -73,6 +73,7 @@ parse_arguments() {
     # デフォルト値
     SLEEP_MINUTES=20
     AUTOWARE_LAUNCH_PACKAGE=autoware_launch
+    RESPAWN=true
 
     # 引数解析
     while [[ $# -gt 0 ]]; do
@@ -93,6 +94,35 @@ parse_arguments() {
                 AUTOWARE_LAUNCH_PACKAGE="${1#*=}"
                 shift
                 ;;
+            --respawn)
+                if [[ $# -gt 1 && "${2,,}" =~ ^(true|false)$ ]]; then
+                    if [ "${2,,}" = "true" ]; then
+                        RESPAWN=true
+                    else
+                        RESPAWN=false
+                    fi
+                    shift 2
+                elif [[ $# -gt 1 && ! "$2" =~ ^- ]]; then
+                    log_error "Invalid value for --respawn: $2 (must be 'true' or 'false', case insensitive)"
+                    exit 1
+                else
+                    RESPAWN=true
+                    shift
+                fi
+                ;;
+            --respawn=*)
+                local respawn_value="${1#*=}"
+                local respawn_value_lower="${respawn_value,,}"
+                if [ "$respawn_value_lower" = "true" ]; then
+                    RESPAWN=true
+                elif [ "$respawn_value_lower" = "false" ]; then
+                    RESPAWN=false
+                else
+                    log_error "Invalid value for --respawn: $respawn_value (must be 'true' or 'false', case insensitive)"
+                    exit 1
+                fi
+                shift
+                ;;
             -h|--help)
                 echo "Usage: $0 [OPTIONS]"
                 echo "Options:"
@@ -100,6 +130,9 @@ parse_arguments() {
                 echo "  --sleep-minutes=MINUTES              Alternative syntax"
                 echo "  --autoware-launch-package PACKAGE    Set autoware launch package name (default: autoware_launch)"
                 echo "  --autoware-launch-package=PACKAGE    Alternative syntax"
+                echo "  --respawn                            Enable rviz2 respawn if it crashes (default: true)"
+                echo "  --respawn true|false                 Enable/disable respawn with space syntax (case insensitive)"
+                echo "  --respawn=true|false                 Enable/disable respawn with equals syntax (case insensitive)"
                 echo "  -h, --help                           Show this help message"
                 exit 0
                 ;;
@@ -121,7 +154,7 @@ parse_arguments() {
 check_dependencies() {
     local missing_deps=()
     local dep
-    for dep in xprop wmctrl; do
+    for dep in xprop wmctrl pgrep; do
         if ! command -v "$dep" &> /dev/null; then
             missing_deps+=("$dep")
         fi
@@ -134,14 +167,47 @@ check_dependencies() {
     fi
 }
 
+cleanup() {
+    if [ -n "$RESPAWN_MONITOR_PID" ]; then
+        kill $RESPAWN_MONITOR_PID 2>/dev/null
+        log_debug "Killed respawn monitor (PID: $RESPAWN_MONITOR_PID)"
+    fi
+
+    if [ -n "$CURRENT_RVIZ2_PID" ]; then
+        kill -2 $CURRENT_RVIZ2_PID 2>/dev/null
+        log_debug "Killed rviz2 (PID: $CURRENT_RVIZ2_PID)"
+    fi
+
+    exit 0
+}
+
 main() {
     log_debug "Using sleep interval: ${SLEEP_MINUTES} minutes"
     log_debug "Using autoware launch package: ${AUTOWARE_LAUNCH_PACKAGE}"
+    log_debug "Respawn: ${RESPAWN}"
+
+    trap cleanup SIGINT SIGTERM
 
     # 最初の rviz2 を起動する
     log_info "Launching first rviz2..."
-    local CURRENT_RVIZ2_PID=$(launch_rviz2 "$AUTOWARE_LAUNCH_PACKAGE")
+    CURRENT_RVIZ2_PID=$(launch_rviz2 "$AUTOWARE_LAUNCH_PACKAGE")
     log_info "Spawned first rviz2 (PID: $CURRENT_RVIZ2_PID)"
+
+    # respawn が有効な場合はバックグラウンドで rviz2 を監視する
+    if [ "$RESPAWN" = true ]; then
+        (
+            while true; do
+                if ! pgrep -x rviz2 > /dev/null; then
+                    log_info "No rviz2 process found. Respawning..."
+                    CURRENT_RVIZ2_PID=$(launch_rviz2 "$AUTOWARE_LAUNCH_PACKAGE")
+                    log_info "Respawned rviz2 (PID: $CURRENT_RVIZ2_PID)"
+                fi
+                sleep 5
+            done
+        ) &
+        RESPAWN_MONITOR_PID=$!
+        log_debug "Started respawn monitor (PID: $RESPAWN_MONITOR_PID)"
+    fi
 
     # ループ
     while true; do
